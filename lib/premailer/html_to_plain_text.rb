@@ -15,6 +15,9 @@ module HtmlToPlainText
     # text version
     txt.gsub!(/<!-- start text\/html -->.*?<!-- end text\/html -->/m, '')
 
+    # remove style tags
+    txt.gsub!(/<style[^>]*>.+?<\/style>/im, '')
+
     # replace images with their alt attributes
     # for img tags with "" for attribute quotes
     # with or without closing tag
