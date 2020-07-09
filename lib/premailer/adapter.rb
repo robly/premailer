@@ -1,19 +1,20 @@
-
-
 class Premailer
   # Manages the adapter classes. Currently supports:
   #
   # * nokogiri
-  # * hpricot
+  # * nokogiri_fast
+  # * nokogumbo
   module Adapter
 
-    autoload :Hpricot, 'premailer/adapter/hpricot'
     autoload :Nokogiri, 'premailer/adapter/nokogiri'
+    autoload :NokogiriFast, 'premailer/adapter/nokogiri_fast'
+    autoload :Nokogumbo, 'premailer/adapter/nokogumbo'
 
     # adapter to required file mapping.
     REQUIREMENT_MAP = [
-      ["hpricot",  :hpricot],
       ["nokogiri", :nokogiri],
+      ["nokogiri", :nokogiri_fast],
+      ["nokogumbo", :nokogumbo],
     ]
 
     # Returns the adapter to use.
@@ -28,8 +29,9 @@ class Premailer
     # then checks to see which are installed if none are loaded.
     # @raise [RuntimeError] unless suitable adapter found.
     def self.default
-      return :hpricot  if defined?(::Hpricot)
       return :nokogiri if defined?(::Nokogiri)
+      return :nokogiri_fast if defined?(::NokogiriFast)
+      return :nokogumbo if defined?(::Nokogumbo)
 
       REQUIREMENT_MAP.each do |(library, adapter)|
         begin
@@ -40,7 +42,7 @@ class Premailer
         end
       end
 
-      raise RuntimeError.new("No suitable adapter for Premailer was found, please install hpricot or nokogiri")
+      raise RuntimeError.new("No suitable adapter for Premailer was found, please install nokogiri or nokogumbo")
     end
 
     # Sets the adapter to use.

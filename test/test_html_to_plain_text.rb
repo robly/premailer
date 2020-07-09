@@ -5,7 +5,7 @@ class TestHtmlToPlainText < Premailer::TestCase
   include HtmlToPlainText
 
   def test_to_plain_text_with_fragment
-    premailer = Premailer.new('<p>Test</p>', :with_html_string => true)
+    premailer = Premailer.new('<p>Test</p>', :adapter => :nokogiri, :with_html_string => true)
     assert_match /Test/, premailer.to_plain_text
   end
 
@@ -19,7 +19,7 @@ class TestHtmlToPlainText < Premailer::TestCase
 		</html>
 END_HTML
 
-    premailer = Premailer.new(html, :with_html_string => true)
+    premailer = Premailer.new(html, :adapter => :nokogiri, :with_html_string => true)
     assert_match /Test/, premailer.to_plain_text
   end
 
@@ -31,8 +31,19 @@ END_HTML
 		<p>Test
 END_HTML
 
-    premailer = Premailer.new(html, :with_html_string => true)
+    premailer = Premailer.new(html, :adapter => :nokogiri, :with_html_string => true)
     assert_match /Test/, premailer.to_plain_text
+  end
+
+  def test_to_plain_text_with_script
+    html = <<END_HTML
+    <script>
+    window.location.href
+    </script>
+END_HTML
+
+    premailer = Premailer.new(html, :with_html_string => true)
+    assert_empty premailer.to_plain_text
   end
 
   def test_specialchars
@@ -44,7 +55,7 @@ END_HTML
     assert_plaintext "a\na", "  \na \n a \t"
     assert_plaintext "a\n\na", "  \na \n\t \n \n a \t"
     assert_plaintext "test text", "test text&nbsp;"
-    assert_plaintext "test text", "test        text"
+    assert_plaintext "test        text", "test        text"
   end
 
   def test_wrapping_spans
@@ -56,7 +67,7 @@ END_HTML
 		</p>
 END_HTML
 
-    premailer = Premailer.new(html, :with_html_string => true)
+    premailer = Premailer.new(html, :adapter => :nokogiri, :with_html_string => true)
     assert_match /Test line 2/, premailer.to_plain_text
   end
 
@@ -82,7 +93,7 @@ END_HTML
     <!-- end text/html -->
     <p>text</p>
 END_HTML
-    premailer = Premailer.new(html, :with_html_string => true)
+    premailer = Premailer.new(html, :adapter => :nokogiri, :with_html_string => true)
     assert_match /test\n\ntext/, premailer.to_plain_text
   end
 
@@ -112,6 +123,10 @@ END_HTML
     lens = []
     txt.each_line { |l| lens << l.length }
     assert lens.max <= 20
+  end
+
+  def test_wrapping_lines_with_many_spaces
+    assert_plaintext "Long     line\nnext line", "Long     line next line", nil ,14
   end
 
   def test_img_alt_tags
@@ -163,6 +178,18 @@ END_HTML
 
     # empty link gets dropped, and shouldn't run forever
     assert_plaintext(("This is some more text\n\n" * 14 + "This is some more text"), "<a href=\"test\"></a>#{"\n<p>This is some more text</p>" * 15}")
+
+    # links that go outside of line should wrap nicely
+    assert_plaintext "Long text before the actual link and then LINK TEXT \n( http://www.long.link ) and then more text that does not wrap", 'Long text before the actual link and then <a href="http://www.long.link"/>LINK TEXT</a> and then more text that does not wrap'
+
+    # same text and link
+    assert_plaintext 'http://example.com', '<a href="http://example.com">http://example.com</a>'
+
+    # link that includes a single quote
+    assert_plaintext "King's Gambit ( https://en.wikipedia.org/wiki/King's_Gambit )", "<a href=\"https://en.wikipedia.org/wiki/King's_Gambit\">King's Gambit</a>"
+
+    # link that includes double quotes
+    assert_plaintext '"Weird Al" Yankovic ( https://en.wikipedia.org/wiki/%22Weird_Al%22_Yankovic )', '<a href="https://en.wikipedia.org/wiki/%22Weird_Al%22_Yankovic">"Weird Al" Yankovic</a>', nil, 100
   end
 
   # see https://github.com/alexdunae/premailer/issues/72
@@ -176,6 +203,15 @@ END_HTML
   def test_links_within_headings
     assert_plaintext "****************************\nTest ( http://example.com/ )\n****************************",
                      "<h1><a href='http://example.com/'>Test</a></h1>"
+  end
+
+  def test_unterminated_anchor_tag
+    assert_plaintext("Example -->", <<-HTML)
+            <th>
+          <!-- <a href="https://www.example.com">
+                Example -->
+            </th>
+    HTML
   end
 
   def assert_plaintext(out, raw, msg = nil, line_length = 65)

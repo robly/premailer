@@ -6,18 +6,6 @@ require File.expand_path(File.dirname(__FILE__)) + '/helper'
 # The test suite will be cleaned up at some point soon.
 class TestMisc < Premailer::TestCase
 
-  # in response to http://github.com/alexdunae/premailer/issues#issue/4
-  #
-  # NB: 2010-11-16 -- after reverting to Hpricot this test can no longer pass.
-  # It's too much of an edge case to get any dev time.
-  def test_parsing_extra_quotes
-    io = StringIO.new('<p></p>
-    <h3 "id="WAR"><a name="WAR"></a>Writes and Resources</h3>
-    <table></table>')
-    premailer = Premailer.new(io, :adapter => :nokogiri)
-    assert_match /<h3>[\s]*<a name="WAR">[\s]*<\/a>[\s]*Writes and Resources[\s]*<\/h3>/i, premailer.to_inline_css
-  end
-
   def test_styles_in_the_body
     html = <<END_HTML
     <html>
@@ -28,10 +16,10 @@ class TestMisc < Premailer::TestCase
 		</html>
 END_HTML
 
-    premailer = Premailer.new(html, :with_html_string => true)
+    premailer = Premailer.new(html, :adapter => :nokogiri, :with_html_string => true)
     premailer.to_inline_css
 
-    assert_match /color\: red/i,  premailer.processed_doc.at('p')['style']
+    assert_match /color\:\s*red/i,  premailer.processed_doc.at('p')['style']
   end
 
   def test_commented_out_styles_in_the_body
@@ -44,10 +32,10 @@ END_HTML
 		</html>
 END_HTML
 
-    premailer = Premailer.new(html, :with_html_string => true)
+    premailer = Premailer.new(html, :adapter => :nokogiri, :with_html_string => true)
     premailer.to_inline_css
 
-    assert_match /color\: red/i,  premailer.processed_doc.at('p')['style']
+    assert_match /color\:\s*red/i,  premailer.processed_doc.at('p')['style']
   end
 
   def test_not_applying_styles_to_the_head
@@ -63,7 +51,7 @@ END_HTML
 		</html>
 END_HTML
 
-    [:nokogiri, :hpricot].each do |adapter|
+    [:nokogiri, :nokogiri_fast, :nokogumbo].each do |adapter|
       premailer = Premailer.new(html, :with_html_string => true, :adapter => adapter)
       premailer.to_inline_css
 
@@ -88,7 +76,7 @@ END_HTML
 		</html>
     END_HTML
 
-    premailer = Premailer.new(html, :with_html_string => true)
+    premailer = Premailer.new(html, :adapter => :nokogiri, :with_html_string => true)
     premailer.to_inline_css
     premailer.processed_doc.search('p').each do |el|
       assert_match /red/i, el['style']
@@ -107,7 +95,7 @@ END_HTML
 		</body>
 		</html>
 END_HTML
-    [:nokogiri, :hpricot].each do |adapter|
+    [:nokogiri, :nokogiri_fast, :nokogumbo].each do |adapter|
       premailer = Premailer.new(html, :with_html_string => true, :preserve_styles => true,  :adapter => adapter)
       premailer.to_inline_css
       assert_equal 1, premailer.processed_doc.search('head link').length
@@ -119,7 +107,7 @@ END_HTML
 
       # should be preserved as unmergeable
 
-      assert_match /color: red/i, premailer.processed_doc.at('body style').inner_html
+      assert_match /color: red/i, premailer.processed_doc.at('head style').inner_html
 
       assert_match /a:hover/i, premailer.processed_doc.at('style').inner_html
 
@@ -133,14 +121,29 @@ END_HTML
 		</body> </html>
 END_HTML
 
-    premailer = Premailer.new(html, :with_html_string => true, :verbose => true)
+    premailer = Premailer.new(html, :adapter => :nokogiri, :with_html_string => true, :verbose => true)
     premailer.to_inline_css
 
     # blue should be inlined
-    assert_no_match /a\:hover[\s]*\{[\s]*color\:[\s]*blue[\s]*;[\s]*\}/i, premailer.processed_doc.at('body style').inner_html
+    refute_match /a\:hover[\s]*\{[\s]*color\:[\s]*blue[\s]*;[\s]*\}/i, premailer.processed_doc.at('head style').inner_html
     # red should remain in <style> block
-    assert_match /a\:hover[\s]*\{[\s]*color\:[\s]*red;[\s]*\}/i, premailer.processed_doc.at('body style').inner_html
+    assert_match /a\:hover[\s]*\{[\s]*color\:[\s]*red;[\s]*\}/i, premailer.processed_doc.at('head style').inner_html
   end
+
+
+  def test_drop_unmergable_rules
+    html = <<END_HTML
+    <html> <head> <style type="text/css"> a { color:blue; } a:hover { color: red; } </style> </head>
+    <p><a>Test</a></p>
+    </body> </html>
+END_HTML
+
+    premailer = Premailer.new(html, :with_html_string => true, :verbose => true, :drop_unmergeable_css_rules => true)
+    premailer.to_inline_css
+
+    # no <style> block should exist
+    assert_nil premailer.processed_doc.at('head style')
+  end  
 
   def test_unmergable_media_queries
     html = <<END_HTML
@@ -160,17 +163,16 @@ END_HTML
     </body> </html>
 END_HTML
 
-    [:nokogiri, :hpricot].each do |adapter|
-      puts "------- Testing adapter #{adapter}"
+    [:nokogiri, :nokogiri_fast, :nokogumbo].each do |adapter|
       premailer = Premailer.new(html, :with_html_string => true, :adapter => adapter)
-      puts premailer.to_inline_css
+      premailer.to_inline_css
 
-      style_tag = premailer.processed_doc.at('body style')
-      assert style_tag, "#{adapter} failed to add a body style tag"
+      style_tag = premailer.processed_doc.at('head style')
+      assert style_tag, "#{adapter} failed to add a head style tag"
 
       style_tag_contents = style_tag.inner_html
 
-      assert_equal "color: blue", premailer.processed_doc.at('a').attributes['style'].to_s,
+      assert_equal "color: blue;", premailer.processed_doc.at('a').attributes['style'].to_s,
                    "#{adapter}: Failed to inline the default style"
       assert_match /@media \(min-width:500px\) \{.*?a \{.*?color: red;.*?\}.*?\}/m, style_tag_contents,
                    "#{adapter}: Failed to add media query with no type to style"
@@ -188,10 +190,8 @@ END_HTML
 		</html>
 END_HTML
 
-    premailer = Premailer.new(html, :with_html_string => true)
-    assert_nothing_raised do
-      premailer.to_inline_css
-    end
+    premailer = Premailer.new(html, :adapter => :nokogiri, :with_html_string => true)
+    premailer.to_inline_css
     assert_match /a\:hover[\s]*\{[\s]*color\:[\s]*red;[\s]*\}/i, premailer.processed_doc.at('style').inner_html
   end
 
@@ -206,10 +206,8 @@ END_HTML
 		</html>
 END_HTML
 
-    premailer = Premailer.new(html, :with_html_string => true)
-    assert_nothing_raised do
-      premailer.to_inline_css
-    end
+    premailer = Premailer.new(html, :adapter => :nokogiri, :with_html_string => true)
+    premailer.to_inline_css
     assert_match /color: red/, premailer.processed_doc.at('a').attributes['style'].to_s
   end
 
@@ -223,21 +221,58 @@ END_HTML
       .style3 { font-size: xx-large; }
       .style5 { background-color: #000080; }
     </style>
-		<tr>
-						<td valign="top" class="style3">
-						<!-- MSCellType="ContentHead" -->
-						<strong>PROMOCION CURSOS PRESENCIALES</strong></td>
-						<strong>
-						<td valign="top" style="height: 125px" class="style5">
-						<!-- MSCellType="DecArea" -->
-						<img alt="" src="../../images/CertisegGold.GIF" width="608" height="87" /></td>
-		</tr>
+    <tr>
+      <td valign="top" class="style3">
+      <!-- MSCellType="ContentHead" -->
+      <strong>PROMOCION CURSOS PRESENCIALES</strong></td>
+      <strong>
+      <td valign="top" style="height: 125px" class="style5">
+      <!-- MSCellType="DecArea" -->
+      <img alt="" src="../../images/CertisegGold.GIF" width="608" height="87" /></td>
+    </tr>
 END_HTML
 
-    premailer = Premailer.new(html, :with_html_string => true)
+    premailer = Premailer.new(html, :adapter => :nokogiri, :with_html_string => true)
     premailer.to_inline_css
     assert_match /font-size: xx-large/, premailer.processed_doc.search('.style3').first.attributes['style'].to_s
-    assert_match /background: #000080/, premailer.processed_doc.search('.style5').first.attributes['style'].to_s
+    refute_match /background: #000080/, premailer.processed_doc.search('.style5').first.attributes['style'].to_s
+    assert_match /#000080/, premailer.processed_doc.search('.style5').first.attributes['bgcolor'].to_s
+  end
+
+  def test_preserve_original_style_attribute
+    html = <<END_HTML
+    <html>
+    <style type="text/css">
+      .style3 { font-size: xx-large; }
+      .style5 { background-color: #000080; }
+    </style>
+    <tr>
+      <td valign="top" class="style3">
+      <!-- MSCellType="ContentHead" -->
+      <strong>PROMOCION CURSOS PRESENCIALES</strong></td>
+      <strong>
+      <td valign="top" style="height: 125px; text-align: center" class="style5">
+      <!-- MSCellType="DecArea" -->
+      <img alt="" src="../../images/CertisegGold.GIF" width="608" height="87" /></td>
+    </tr>
+END_HTML
+
+    premailer = Premailer.new(
+      html,
+      adapter: :nokogiri,
+      with_html_string: true,
+      preserve_style_attribute: true
+    )
+
+    premailer.to_inline_css
+
+    style5 = premailer.processed_doc.search('.style5').first
+    style5_style = style5.attributes['style'].to_s
+
+    assert_match /font-size: xx-large/, premailer.processed_doc.search('.style3').first.attributes['style'].to_s
+    assert_match /background-color: #000080/, style5_style
+    assert_match /text-align: center/, style5_style
+    assert_match /#000080/, style5.attributes['bgcolor'].to_s
   end
 
   # in response to https://github.com/alexdunae/premailer/issues/56
@@ -255,7 +290,7 @@ END_HTML
 
     premailer = Premailer.new(html, :with_html_string => true, :adapter => :nokogiri)
     premailer.to_inline_css
-    assert_equal 'color: green !important', premailer.processed_doc.search('p').first.attributes['style'].to_s
+    assert_equal 'color: green !important;', premailer.processed_doc.search('p').first.attributes['style'].to_s
   end
 
   # in response to https://github.com/alexdunae/premailer/issues/28
@@ -273,28 +308,11 @@ END_HTML
     </html>
 END_HTML
 
-    premailer = Premailer.new(html, :with_html_string => true)
+    premailer = Premailer.new(html, :adapter => :nokogiri, :with_html_string => true)
     premailer.to_inline_css
 
     assert_match /margin: 0 auto/, premailer.processed_doc.search('#page').first.attributes['style'].to_s
     assert_match /border-style: solid none solid solid;/, premailer.processed_doc.search('p').first.attributes['style'].to_s
-  end
-
-  def test_sorting_style_attributes
-    html = <<END_HTML
-    <html>
-    <style type="text/css">
-      #page { right: 10px; left: 5px }
-    </style>
-    <body>
-      <div id='page'>test</div>
-    </body>
-    </html>
-END_HTML
-
-    premailer = Premailer.new(html, :with_html_string => true)
-    premailer.to_inline_css
-    assert_equal "left: 5px; right: 10px", premailer.processed_doc.search('#page').first.attributes['style'].to_s
   end
 
   def test_removing_scripts
@@ -309,13 +327,13 @@ END_HTML
     </html>
 END_HTML
 
-    [:nokogiri, :hpricot].each do |adapter|
+    [:nokogiri, :nokogiri_fast, :nokogumbo].each do |adapter|
       premailer = Premailer.new(html, :with_html_string => true, :remove_scripts => true, :adapter => adapter)
       premailer.to_inline_css
       assert_equal 0, premailer.processed_doc.search('script').length
     end
 
-    [:nokogiri, :hpricot].each do |adapter|
+    [:nokogiri, :nokogiri_fast, :nokogumbo].each do |adapter|
       premailer = Premailer.new(html, :with_html_string => true, :remove_scripts => false, :adapter => adapter)
       premailer.to_inline_css
       assert_equal 1, premailer.processed_doc.search('script').length
@@ -334,7 +352,7 @@ END_HTML
     </html>
 END_HTML
 
-    [:nokogiri, :hpricot].each do |adapter|
+    [:nokogiri, :nokogiri_fast, :nokogumbo].each do |adapter|
       premailer = Premailer.new(html, :with_html_string => true, :adapter => adapter)
       assert_match 'bgcolor="#FF0000"', premailer.to_inline_css
     end
@@ -370,4 +388,39 @@ END_HTML
 
     assert !premailer.processed_doc.css('script[type="application/ld+json"]').first.children.first.cdata?
   end
+
+  def test_style_without_data_in_content
+    html = <<END_HTML
+    <html>
+    <head>
+      <style>#logo {content:url(good.png)};}</style>
+    </head>
+    <body>
+      <image id="logo"/>
+    </body>
+    </html>
+END_HTML
+    [:nokogiri, :nokogiri_fast, :nokogumbo].each do |adapter|
+      premailer = Premailer.new(html, :with_html_string => true, :adapter => adapter)
+      assert_match 'content: url(good.png)', premailer.to_inline_css
+    end
+  end
+
+  def test_style_with_data_in_content
+    html = <<END_HTML
+    <html>
+    <head>
+      <style>#logo {content: url(data:image/png;base64,LOTSOFSTUFF)};}</style>
+    </head>
+    <body>
+      <image id="logo"/>
+    </body>
+    </html>
+END_HTML
+    [:nokogiri, :nokogiri_fast, :nokogumbo].each do |adapter|
+      premailer = Premailer.new(html, :with_html_string => true, :adapter => adapter)
+      assert_match /content:\s*url\(data:image\/png;base64,LOTSOFSTUFF\)/, premailer.to_inline_css
+    end
+  end
+
 end

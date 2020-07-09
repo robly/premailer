@@ -5,6 +5,11 @@ require 'htmlentities'
 module HtmlToPlainText
 
   # Returns the text in UTF-8 format with all HTML tags removed
+  #   
+  # HTML content can be omitted from the output by surrounding it in the following comments:   
+  #
+  # <!-- start text/html -->
+  # <!-- end text/html -->
   #
   # TODO: add support for DL, OL
   def convert_to_text(html, line_length = 65, from_charset = 'UTF-8')
@@ -33,18 +38,26 @@ module HtmlToPlainText
     # <img alt=''>
     txt.gsub!(/<img.+?alt=\'([^\']*)\'[^>]*\>/i, '\1')
 
-    # links
-    txt.gsub!(/<a\s.*?href=\"(mailto:)?([^\"]*)\"[^>]*>((.|\s)*?)<\/a>/i) do |s|
+    # remove script tags and content
+    txt.gsub!(/<script.*\/script>/m, '')
+
+    # links with double quotes
+    txt.gsub!(/<a\s[^\n]*?href=["'](mailto:)?([^"]*)["][^>]*>(.*?)<\/a>/im) do |s|
       if $3.empty?
         ''
+      elsif $3.strip.downcase == $2.strip.downcase
+        $3.strip
       else
         $3.strip + ' ( ' + $2.strip + ' )'
       end
     end
 
-    txt.gsub!(/<a\s.*?href='(mailto:)?([^\']*)\'[^>]*>((.|\s)*?)<\/a>/i) do |s|
+    # links with single quotes
+    txt.gsub!(/<a\s[^\n]*?href=["'](mailto:)?([^']*)['][^>]*>(.*?)<\/a>/im) do |s|
       if $3.empty?
         ''
+      elsif $3.strip.downcase == $2.strip.downcase
+        $3.strip
       else
         $3.strip + ' ( ' + $2.strip + ' )'
       end
@@ -95,25 +108,23 @@ module HtmlToPlainText
     he = HTMLEntities.new
     txt = he.decode(txt)
 
+    # word wrap
     txt = word_wrap(txt, line_length)
 
     # remove linefeeds (\r\n and \r -> \n)
     txt.gsub!(/\r\n?/, "\n")
 
     # strip extra spaces
-    txt.gsub!(/\302\240+/, " ") # non-breaking spaces -> spaces
+    txt.gsub!(/[ \t]*\302\240+[ \t]*/, " ") # non-breaking spaces -> spaces
     txt.gsub!(/\n[ \t]+/, "\n") # space at start of lines
     txt.gsub!(/[ \t]+\n/, "\n") # space at end of lines
 
     # no more than two consecutive newlines
     txt.gsub!(/[\n]{3,}/, "\n\n")
 
-    # no more than two consecutive spaces
-    txt.gsub!(/ {2,}/, " ")
-
     # the word messes up the parens
-    txt.gsub!(/\([ \n](http[^)]+)[\n ]\)/) do |s|
-      "( " + $1 + " )"
+    txt.gsub!(/\(([ \n])(http[^)]+)([\n ])\)/) do |s|
+      ($1 == "\n" ? $1 : '' ) + '( ' + $2 + ' )' + ($3 == "\n" ? $1 : '' )
     end
 
     txt.strip

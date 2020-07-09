@@ -121,10 +121,10 @@ class Premailer
   # unmergeable CSS rules to be preserved in the head (CssParser)
   attr_reader   :unmergable_rules
 
-  # processed HTML document (Hpricot/Nokogiri)
+  # processed HTML document (Nokogiri/Nokogumbo)
   attr_reader   :processed_doc
 
-  # source HTML document (Hpricot/Nokogiri)
+  # source HTML document (Nokogiri/Nokogumbo)
   attr_reader   :doc
 
   # Warning levels
@@ -151,12 +151,14 @@ class Premailer
   #
   # @param [Hash] options the options to handle html with.
   # @option options [Fixnum] :line_length Line length used by to_plain_text. Default is 65.
-  # @option options [Fixnum] :warn_level What level of CSS compatibility warnings to show (see {Premailer::Warnings}).
+  # @option options [Fixnum] :warn_level What level of CSS compatibility warnings to show (see {Premailer::Warnings}, default is Warnings::SAFE).
   # @option options [String] :link_query_string A string to append to every <tt>a href=""</tt> link. Do not include the initial <tt>?</tt>.
   # @option options [String] :base_url Used to calculate absolute URLs for local files.
   # @option options [Array(String)] :css Manually specify CSS stylesheets.
-  # @option options [Boolean] :css_to_attributes Copy related CSS attributes into HTML attributes (e.g. background-color to bgcolor)
+  # @option options [Boolean] :css_to_attributes Copy related CSS attributes into HTML attributes (e.g. background-color to bgcolor). Default is true.
+  # @option options [Boolean] :preserve_style_attribute Preserve original style attribute
   # @option options [String] :css_string Pass CSS as a string
+  # @option options [Boolean] :rgb_to_hex_attributes Convert RBG to Hex colors. Default is false.
   # @option options [Boolean] :remove_ids Remove ID attributes whenever possible and convert IDs used as anchors to hashed to avoid collisions in webmail programs.  Default is false.
   # @option options [Boolean] :remove_classes Remove class attributes. Default is false.
   # @option options [Boolean] :remove_comments Remove html comments. Default is false.
@@ -166,18 +168,23 @@ class Premailer
   # @option options [Boolean] :preserve_reset Whether to preserve styles associated with the MailChimp reset code. Default is true.
   # @option options [Boolean] :with_html_string Whether the html param should be treated as a raw string. Default is false.
   # @option options [Boolean] :verbose Whether to print errors and warnings to <tt>$stderr</tt>.  Default is false.
+  # @option options [Boolean] :io_exceptions Throws exceptions on I/O errors.
   # @option options [Boolean] :include_link_tags Whether to include css from <tt>link rel=stylesheet</tt> tags.  Default is true.
   # @option options [Boolean] :include_style_tags Whether to include css from <tt>style</tt> tags.  Default is true.
   # @option options [String] :input_encoding Manually specify the source documents encoding. This is a good idea. Default is ASCII-8BIT.
   # @option options [Boolean] :replace_html_entities Convert HTML entities to actual characters. Default is false.
   # @option options [Boolean] :escape_url_attributes URL Escapes href, src, and background attributes on elements. Default is true.
-  # @option options [Symbol] :adapter Which HTML parser to use, either <tt>:nokogiri</tt> or <tt>:hpricot</tt>.  Default is <tt>:hpricot</tt>.
+  # @option options [Symbol] :adapter Which HTML parser to use, <tt>:nokogiri</tt>, <tt>:nokogiri_fast</tt> or <tt>:nokogumbo</tt>.  Default is <tt>:nokogiri</tt>.
   # @option options [String] :output_encoding Output encoding option for Nokogiri adapter. Should be set to "US-ASCII" to output HTML entities instead of Unicode characters.
+  # @option options [Boolean] :create_shorthands Combine several properties into a shorthand one, e.g. font: style weight size. Default is true.
+  # @option options [Boolean] :html_fragment Handle HTML fragment without any HTML content wrappers. Default is false.
+  # @option options [Boolean] :drop_unmergeable_css_rules Do not include unmergeable css rules in a <tt><style><tt> tag. Default is false.  
   def initialize(html, options = {})
     @options = {:warn_level => Warnings::SAFE,
                 :line_length => 65,
                 :link_query_string => nil,
                 :base_url => nil,
+                :rgb_to_hex_attributes => true,
                 :remove_classes => false,
                 :remove_ids => false,
                 :remove_comments => false,
@@ -185,6 +192,7 @@ class Premailer
                 :reset_contenteditable => true,
                 :css => [],
                 :css_to_attributes => true,
+                :preserve_style_attribute => false,
                 :with_html_string => false,
                 :css_string => nil,
                 :preserve_styles => false,
@@ -199,7 +207,10 @@ class Premailer
                 :replace_html_entities => false,
                 :escape_url_attributes => true,
                 :unescaped_ampersand => false,
+                :create_shorthands => true,
+                :html_fragment => false,
                 :adapter => Adapter.use,
+                :drop_unmergeable_css_rules => false
                 }.merge(options)
 
     @html_file = html
@@ -214,9 +225,9 @@ class Premailer
     @unmergable_rules = nil
 
     if @options[:base_url]
-      @base_url = URI.parse(@options.delete(:base_url))
+      @base_url = Addressable::URI.parse(@options.delete(:base_url))
     elsif not @is_local_file
-      @base_url = URI.parse(@html_file)
+      @base_url = Addressable::URI.parse(@html_file)
     end
 
     @css_parser = CssParser::Parser.new({
@@ -227,7 +238,7 @@ class Premailer
 
     @adapter_class = Adapter.find @options[:adapter]
 
-    self.class.send(:include, @adapter_class)
+    self.extend(@adapter_class)
 
     @doc = load_html(@html_file)
 
@@ -260,7 +271,9 @@ protected
       end
 
       load_css_from_string(css_block)
-    rescue; end
+    rescue => e
+      raise e if @options[:io_exceptions]
+    end
   end
 
   def load_css_from_string(css_string)
@@ -282,11 +295,7 @@ protected
 
     # Load CSS included in <tt>style</tt> and <tt>link</tt> tags from an HTML document.
   def load_css_from_html! # :nodoc:
-    if (@options[:adapter] == :nokogiri)
-      tags = @doc.search("link[@rel='stylesheet']:not([@data-premailer='ignore'])", "//style[not(contains(@data-premailer,'ignore'))]")
-    else
-      tags = @doc.search("link[@rel='stylesheet']:not([@data-premailer='ignore']), style:not([@data-premailer='ignore'])")
-    end
+    tags = @doc.search("link[@rel='stylesheet']:not([@data-premailer='ignore']), style:not([@data-premailer='ignore'])")
     if tags
       tags.each do |tag|
         if tag.to_s.strip =~ /^\<link/i && tag.attributes['href'] && media_type_ok?(tag.attributes['media']) && @options[:include_link_tags]
@@ -298,10 +307,10 @@ protected
               link_uri = tag.attributes['href'].to_s.sub(@base_url.to_s, '')
             else
               link_uri = File.join(File.dirname(@html_file), tag.attributes['href'].to_s.sub!(@base_url.to_s, ''))
-              # if the file does not exist locally, try to grab the remote reference
-              unless File.exists?(link_uri)
-                link_uri = Premailer.resolve_link(tag.attributes['href'].to_s, @html_file)
-              end
+            end
+            # if the file does not exist locally, try to grab the remote reference
+            unless File.exists?(link_uri)
+              link_uri = Premailer.resolve_link(tag.attributes['href'].to_s, @html_file)
             end
           else
             link_uri = tag.attributes['href'].to_s
@@ -364,7 +373,7 @@ public
       next if href[0,1] =~ /[\#\{\[\<\%]/ # don't bother with anchors or special-looking links
 
       begin
-        href = URI.parse(href)
+        href = Addressable::URI.parse(href)
 
         if current_host and href.host != nil and href.host != current_host
           $stderr.puts "Skipping append_query_string for: #{href.to_s} because host is no good" if @options[:verbose]
@@ -384,7 +393,7 @@ public
         end
 
         el['href'] = href.to_s
-      rescue URI::Error => e
+      rescue Addressable::URI::InvalidURIError => e
         $stderr.puts "Skipping append_query_string for: #{href.to_s} (#{e.message})" if @options[:verbose]
         next
       end
@@ -395,7 +404,7 @@ public
 
   # Check for an XHTML doctype
   def is_xhtml?
-    intro = @doc.to_html.strip.split("\n")[0..2].join(' ')
+    intro = @doc.to_xhtml.strip.split("\n")[0..2].join(' ')
     is_xhtml = !!(intro =~ /w3c\/\/[\s]*dtd[\s]+xhtml/i)
     $stderr.puts "Is XHTML? #{is_xhtml.inspect}\nChecked:\n#{intro}" if @options[:debug]
     is_xhtml
@@ -406,11 +415,11 @@ public
   # Processes <tt>href</tt> <tt>src</tt> and <tt>background</tt> attributes
   # as well as CSS <tt>url()</tt> declarations found in inline <tt>style</tt> attributes.
   #
-  # <tt>doc</tt> is an Hpricot document and <tt>base_uri</tt> is either a string or a URI.
+  # <tt>doc</tt> is a document and <tt>base_uri</tt> is either a string or a URI.
   #
-  # Returns an Hpricot document.
+  # Returns a document.
   def convert_inline_links(doc, base_uri) # :nodoc:
-    base_uri = URI.parse(base_uri) unless base_uri.kind_of?(URI)
+    base_uri = Addressable::URI.parse(base_uri) unless base_uri.kind_of?(Addressable::URI)
 
     append_qs = @options[:link_query_string] || ''
     escape_attrs = @options[:escape_url_attributes]
@@ -429,7 +438,7 @@ public
 
         if tag.attributes[attribute].to_s =~ /^http/i
           begin
-            merged = URI.parse(tag.attributes[attribute])
+            merged = Addressable::URI.parse(tag.attributes[attribute])
           rescue; next; end
         else
           begin
@@ -437,13 +446,13 @@ public
           rescue
             begin
               next unless escape_attrs
-              merged = Premailer.resolve_link(URI.escape(tag.attributes[attribute].to_s), base_uri)
+              merged = Premailer.resolve_link(Addressable::URI.escape(tag.attributes[attribute].to_s), base_uri)
             rescue; end
           end
         end
 
         # make sure 'merged' is a URI
-        merged = URI.parse(merged.to_s) unless merged.kind_of?(URI)
+        merged = Addressable::URI.parse(merged.to_s) unless merged.kind_of?(Addressable::URI)
         tag[attribute] = merged.to_s
       end # end of each tag
     end # end of each attrs
@@ -460,23 +469,18 @@ public
   end
 
   # @private
-  def self.escape_string(str) # :nodoc:
-    str.gsub(/"/ , "'")
-  end
-
-  # @private
   def self.resolve_link(path, base_path) # :nodoc:
     path.strip!
     resolved = nil
     if path =~ /\A(?:(https?|ftp|file):)\/\//i
       resolved = path
       Premailer.canonicalize(resolved)
-    elsif base_path.kind_of?(URI)
-      resolved = base_path.merge(path)
+    elsif base_path.kind_of?(Addressable::URI)
+      resolved = base_path.join(path)
       Premailer.canonicalize(resolved)
     elsif base_path.kind_of?(String) and base_path =~ /\A(?:(?:https?|ftp|file):)\/\//i
-      resolved = URI.parse(base_path)
-      resolved = resolved.merge(path)
+      resolved = Addressable::URI.parse(base_path)
+      resolved = resolved.join(path)
       Premailer.canonicalize(resolved)
     else
       File.expand_path(path, File.dirname(base_path))
@@ -487,15 +491,13 @@ public
   #
   # IO objects return true, as do strings that look like URLs.
   def self.local_data?(data)
-    return true   if data.is_a?(IO) || data.is_a?(StringIO)
-    return true   if data =~ /\Afile:\/\//i
-    return false  if data =~ /\A(?:(https?|ftp):)\/\//i
+    return false  if data.kind_of?(String) && data =~ /\A(?:(https?|ftp):)\/\//i
     true
   end
 
   # from http://www.ruby-forum.com/topic/140101
   def self.canonicalize(uri) # :nodoc:
-    u = uri.kind_of?(URI) ? uri : URI.parse(uri.to_s)
+    u = uri.kind_of?(Addressable::URI) ? uri : Addressable::URI.parse(uri.to_s)
     u.normalize!
     newpath = u.path
     while newpath.gsub!(%r{([^/]+)/\.\./?}) { |match|

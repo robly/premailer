@@ -1,18 +1,15 @@
-# encoding: utf-8
-$:.unshift(File.expand_path(File.dirname(__FILE__) + '/../lib'))
-$:.unshift(File.expand_path(File.dirname(__FILE__) + '/../'))
-require 'rubygems'
-require 'test/unit'
-require 'webmock/test_unit'
+require 'bundler/setup'
+require 'maxitest/autorun'
+require 'webmock/minitest'
 require 'premailer'
 
-class Premailer::TestCase < Test::Unit::TestCase
+class Premailer::TestCase < Minitest::Test
   BASE_URI  = 'http://premailer.dev/'
   BASE_PATH =  File.expand_path(File.dirname(__FILE__)) + '/files'
 
   def setup
     stub_request(:any, /premailer\.dev\/*/).to_return do |request|
-      file_path = BASE_PATH + URI.parse(request.uri).path
+      file_path = BASE_PATH + Addressable::URI.parse(request.uri).path
       if File.exists?(file_path)
         { :status => 200, :body => File.open(file_path) }
       else

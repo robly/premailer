@@ -3,15 +3,13 @@ require File.expand_path(File.dirname(__FILE__)) + '/helper'
 
 class TestLinks < Premailer::TestCase
   def test_empty_query_string
-    assert_nothing_raised do
-      premailer = Premailer.new('<p>Test</p>', :with_html_string => true, :link_query_string => ' ')
-      premailer.to_inline_css
-    end
+    premailer = Premailer.new('<p>Test</p>', :adapter => :nokogiri, :with_html_string => true, :link_query_string => ' ')
+    premailer.to_inline_css
   end
 
   def test_appending_link_query_string
     qs = 'utm_source=1234&tracking=good&amp;doublescape'
-    opts = {:base_url => 'http://example.com/',  :link_query_string => qs, :with_html_string => true, :adapter => :hpricot}
+    opts = {:base_url => 'http://example.com/',  :link_query_string => qs, :with_html_string => true, :adapter => :nokogiri}
 
     appendable = [
         '/',
@@ -45,7 +43,7 @@ class TestLinks < Premailer::TestCase
     premailer.processed_doc.search('a').each do |el|
       href = el.attributes['href'].to_s
       next if href.nil? or href.empty?
-      uri = URI.parse(href)
+      uri = Addressable::URI.parse(href)
       assert_match qs, uri.query, "missing query string for #{el.to_s}"
     end
 
@@ -64,14 +62,14 @@ class TestLinks < Premailer::TestCase
   def test_stripping_extra_question_marks_from_query_string
     qs = '??utm_source=1234'
 
-    premailer = Premailer.new("<a href='/test/?'>Link</a> <a href='/test/'>Link</a>", :link_query_string => qs, :with_html_string => true)
+    premailer = Premailer.new("<a href='/test/?'>Link</a> <a href='/test/'>Link</a>", :adapter => :nokogiri, :link_query_string => qs, :with_html_string => true)
     premailer.to_inline_css
 
     premailer.processed_doc.search('a').each do |a|
       assert_equal '/test/?utm_source=1234', a['href'].to_s
     end
 
-    premailer = Premailer.new("<a href='/test/?123&456'>Link</a>", :link_query_string => qs, :with_html_string => true)
+    premailer = Premailer.new("<a href='/test/?123&456'>Link</a>", :adapter => :nokogiri, :link_query_string => qs, :with_html_string => true)
     premailer.to_inline_css
 
     assert_equal '/test/?123&456&amp;utm_source=1234', premailer.processed_doc.at('a')['href']
@@ -80,7 +78,7 @@ class TestLinks < Premailer::TestCase
   def test_unescape_ampersand
     qs = 'utm_source=1234'
 
-    premailer = Premailer.new("<a href='/test/?q=query'>Link</a>", :link_query_string => qs, :with_html_string => true, :unescaped_ampersand => true)
+    premailer = Premailer.new("<a href='/test/?q=query'>Link</a>", :adapter => :nokogiri, :link_query_string => qs, :with_html_string => true, :unescaped_ampersand => true)
     premailer.to_inline_css
 
     premailer.processed_doc.search('a').each do |a|
@@ -90,13 +88,13 @@ class TestLinks < Premailer::TestCase
 
   def test_preserving_links
     html = "<a href='http://example.com/index.php?pram1=one&pram2=two'>Link</a>"
-    premailer = Premailer.new(html.to_s, :link_query_string => '', :with_html_string => true)
+    premailer = Premailer.new(html.to_s, :adapter => :nokogiri, :link_query_string => '', :with_html_string => true)
     premailer.to_inline_css
 
     assert_equal 'http://example.com/index.php?pram1=one&pram2=two', premailer.processed_doc.at('a')['href']
 
     html = "<a href='http://example.com/index.php?pram1=one&pram2=two'>Link</a>"
-    premailer = Premailer.new(html.to_s, :link_query_string => 'qs', :with_html_string => true)
+    premailer = Premailer.new(html.to_s, :adapter => :nokogiri, :link_query_string => 'qs', :with_html_string => true)
     premailer.to_inline_css
 
     assert_equal 'http://example.com/index.php?pram1=one&pram2=two&amp;qs', premailer.processed_doc.at('a')['href']
@@ -113,21 +111,21 @@ class TestLinks < Premailer::TestCase
   end
 
   def test_resolving_urls_from_uri
-    base_uri = URI.parse('http://example.com/')
+    base_uri = Addressable::URI.parse('http://example.com/')
     ['test.html', '/test.html', './test.html',
      'test/../test.html', 'test/../test/../test.html'].each do |q|
       assert_equal 'http://example.com/test.html', Premailer.resolve_link(q, base_uri), q
     end
 
-    base_uri = URI.parse('https://example.net:80/~basedir/')
+    base_uri = Addressable::URI.parse('https://example.net:80/~basedir/')
     assert_equal 'https://example.net:80/~basedir/test.html?var=1#anchor', Premailer.resolve_link('test/../test/../test.html?var=1#anchor', base_uri)
 
     # base URI with a query string
-    base_uri = URI.parse('http://example.com/dir/index.cfm?newsletterID=16')
+    base_uri = Addressable::URI.parse('http://example.com/dir/index.cfm?newsletterID=16')
     assert_equal 'http://example.com/dir/index.cfm?link=15', Premailer.resolve_link('?link=15', base_uri)
 
     # URI preceded by a space
-    base_uri = URI.parse('http://example.com/')
+    base_uri = Addressable::URI.parse('http://example.com/')
     assert_equal 'http://example.com/path', Premailer.resolve_link(' path', base_uri)
   end
 
@@ -137,14 +135,12 @@ class TestLinks < Premailer::TestCase
     base_uri = "<html><head></head><body>\nhttp://example.com/\n</body>"
     ['test.html', '/test.html', './test.html',
      'test/../test.html', 'test/../test/../test.html'].each do |q|
-      assert_nothing_raised do
-        Premailer.resolve_link(q, base_uri)
-      end
+      Premailer.resolve_link(q, base_uri)
     end
   end
 
   def test_resolving_urls_in_doc
-    # force Nokogiri since this consistenly segfaults with Hpricot
+    # force Nokogiri
     base_file = File.dirname(__FILE__) + '/files/base.html'
     base_url = 'https://my.example.com:8080/test-path.html'
     premailer = Premailer.new(base_file, :base_url => base_url, :adapter => :nokogiri)
@@ -170,7 +166,7 @@ class TestLinks < Premailer::TestCase
     ]
 
     html = convertable.collect {|url| "<a href='#{url}'>Link</a>" }
-    premailer = Premailer.new(html.to_s, :base_url => "http://example.com", :with_html_string => true)
+    premailer = Premailer.new(html.to_s, :adapter => :nokogiri, :base_url => "http://example.com", :with_html_string => true)
 
     premailer.processed_doc.search('a').each do |el|
       href = el.attributes['href'].to_s
@@ -196,7 +192,7 @@ class TestLinks < Premailer::TestCase
 
     html = not_convertable.collect {|url| "<a href='#{url}'>Link</a>" }
 
-    premailer = Premailer.new(html.to_s, :base_url => "example.com", :with_html_string => true)
+    premailer = Premailer.new(html.to_s, :adapter => :nokogiri, :base_url => "example.com", :with_html_string => true)
     premailer.to_inline_css
 
     premailer.processed_doc.search('a').each do |el|

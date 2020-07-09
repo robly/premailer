@@ -2,8 +2,8 @@ require 'nokogiri'
 
 class Premailer
   module Adapter
-    # Nokogiri adapter
-    module Nokogiri
+    # NokogiriFast adapter
+    module NokogiriFast
 
       include AdapterHelper::RgbToHex
       # Merge CSS into the HTML document.
@@ -18,8 +18,14 @@ class Premailer
         doc.search("*[@style]").each do |el|
           el['style'] = '[SPEC=1000[' + el.attributes['style'] + ']]'
         end
+
+        # Create an index for nodes by tag name/id/class
+        # Also precompute the map of nodes to descendants
+        index, all_nodes, descendants = make_index(doc)
+
         # Iterate through the rules and merge them into the HTML
         @css_parser.each_selector(:all) do |selector, declaration, specificity, media_types|
+
           # Save un-mergable rules separately
           selector.gsub!(/:link([\s]*)+/i) { |m| $1 }
 
@@ -36,11 +42,9 @@ class Premailer
                 @unmergable_rules.add_rule_set!(CssParser::RuleSet.new(selector, declaration)) unless !@options[:preserve_reset]
               end
 
-              # Change single ID CSS selectors into xpath so that we can match more
-              # than one element.  Added to work around dodgy generated code.
-              selector.gsub!(/\A\#([\w_\-]+)\Z/, '*[@id=\1]')
-
-              doc.search(selector).each do |el|
+              # Try the new index based technique. If not supported, fall back to the old brute force one.
+              nodes = match_selector(index, all_nodes, descendants, selector) || doc.search(selector)
+              nodes.each do |el|
                 if el.elem? and (el.name != 'head' and el.parent.name != 'head')
                   # Add a style attribute or append to the existing one
                   block = "[SPEC=#{specificity}[#{declaration}]]"
@@ -55,9 +59,7 @@ class Premailer
         end
 
         # Remove script tags
-        if @options[:remove_scripts]
-          doc.search("script").remove
-        end
+        doc.search("script").remove if @options[:remove_scripts]
 
         # Read STYLE attributes and perform folding
         doc.search("*[@style]").each do |el|
@@ -154,10 +156,10 @@ class Premailer
             style_tag.content = styles
             doc.add_child(style_tag)
           else
-            style_tag = doc.create_element "style", "#{styles}"
+            style_tag = doc.create_element "style", styles
             head = doc.at_css('head')
-            head ||=  doc.root.first_element_child.add_previous_sibling(doc.create_element "head")  if doc.root && doc.root.first_element_child
-            head ||=  doc.add_child(doc.create_element "head")
+            head ||= doc.root.first_element_child.add_previous_sibling(doc.create_element "head") if doc.root && doc.root.first_element_child
+            head ||= doc.add_child(doc.create_element "head")
             head << style_tag
           end
         end
@@ -246,6 +248,114 @@ class Premailer
         doc
       end
 
+      private
+
+      # For very large documents, it is useful to trade off some memory for performance.
+      # We can build an index of the nodes so we can quickly select by id/class/tagname
+      # instead of search the tree again and again.
+      #
+      # @param page The Nokogiri HTML document to index.
+      # @return [index, set_of_all_nodes, descendants] The index is a hash from key to set of nodes.
+      #         The "descendants" is a hash mapping a node to the set of its descendant nodes.
+      def make_index(page)
+        index = {} # Contains a map of tag/class/id names to set of nodes.
+        all_nodes = [] # A plain array of all nodes in the doc. The superset.
+        descendants = {} # Maps node -> set of descendants
+
+        page.traverse do |node|
+          all_nodes.push(node)
+
+          if node != page then
+            index_ancestry(page, node, node.parent, descendants)
+          end
+
+          # Index the node by tag name. This is the least selective
+          # of the three index types empirically.
+          index[node.name] = (index[node.name] || Set.new).add(node)
+
+          # Index the node by all class attributes it possesses.
+          # Classes are modestly selective. Usually more than tag names
+          # but less selective than ids.
+          if node.has_attribute?("class") then
+            node.get_attribute("class").split(/\s+/).each do |c|
+              c = '.' + c
+              index[c] = (index[c] || Set.new).add(node)
+            end
+          end
+
+          # Index the node by its "id" attribute if it has one.
+          # This is usually the most selective of the three.
+          if node.has_attribute?("id") then
+            id = '#' + node.get_attribute("id")
+            index[id] = (index[id] || Set.new).add(node)
+          end
+        end
+
+        # If an index key isn't there, then we should treat it as an empty set.
+        # This makes the index total and we don't need to special case presence.
+        # Note that the default value will never be modified. So we don't need
+        # default_proc.
+        index.default = Set.new
+        descendants.default = Set.new
+
+        return index, Set.new(all_nodes), descendants
+      end
+
+      # @param doc The top level document
+      # @param elem The element whose ancestry is to be captured
+      # @param parent the current parent in the process of capturing. Should be set to elem.parent for starters.
+      # @param descendants The running hash map of node -> set of nodes that maps descendants of a node.
+      # @return The descendants argument after updating it.
+      def index_ancestry(doc, elem, parent, descendants)
+        if parent then
+          descendants[parent] = (descendants[parent] || Set.new).add(elem)
+          if doc != parent then
+            index_ancestry(doc, elem, parent.parent, descendants)
+          end
+        end
+        descendants
+      end
+
+      # @param index An index hash returned by make_index
+      # @param base The base set of nodes within which the given spec is to be matched.
+      # @param intersection_selector A CSS intersection selector string of the form
+      #             "hello.world" or "#blue.diamond". This should not contain spaces.
+      # @return Set of nodes matching the given spec that are present in the base set.
+      def narrow_down_nodes(index, base, intersection_selector)
+        intersection_selector.split(/(?=[.#])/).reduce(base) do |acc, sel|
+          acc = index[sel].intersection(acc)
+          acc
+        end
+      end
+
+      # @param index An index returned by make_index
+      # @param allNodes The set of all nodes in the DOM to search
+      # @param selector A simple CSS tree matching selector of the form "div.container p.item span"
+      # @return Set of matching nodes
+      #
+      # Note that fancy CSS selector syntax is not supported. Anything
+      # not matching the regex /^[-a-zA-Z0-9\s_.#]*$/ should not be passed.
+      # It will return nil when such a selector is passed, so you can take
+      # action on the falsity of the return value.
+      def match_selector(index, all_nodes, descendants, selector)
+        if /[^-a-zA-Z0-9_\s.#]/.match(selector) then
+          return nil
+        end
+
+        take_children = false
+        selector.split(/\s+/).reduce(all_nodes) do |base, spec|
+          desc = base
+          if take_children then
+            desc = Set.new
+            base.each do |n|
+              desc.merge(descendants[n])
+            end
+          else
+            take_children = true
+          end
+          narrow_down_nodes(index, desc, spec)
+        end
+      end
     end
   end
 end
