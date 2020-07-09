@@ -27,30 +27,37 @@ class TestPremailer < Premailer::TestCase
   def test_detecting_html
     [:nokogiri, :nokogiri_fast, :nokogumbo].each do |adapter|
       remote_setup('base.html', :adapter => adapter)
-      assert !@premailer.is_xhtml?
+      refute @premailer.is_xhtml?, "Using: #{adapter}"
     end
   end
 
   def test_detecting_xhtml
     [:nokogiri, :nokogiri_fast, :nokogumbo].each do |adapter|
       remote_setup('xhtml.html', :adapter => adapter)
-      assert @premailer.is_xhtml?
+      assert @premailer.is_xhtml?, "Using: #{adapter}"
+    end
+  end
+
+  def test_detecting_plain_text
+    [:nokogiri, :nokogiri_fast, :nokogumbo].each do |adapter|
+      remote_setup('plain.txt', :adapter => adapter)
+      refute @premailer.is_xhtml?, "Using: #{adapter}"
     end
   end
 
   def test_self_closing_xhtml_tags
     [:nokogiri, :nokogiri_fast, :nokogumbo].each do |adapter|
       remote_setup('xhtml.html', :adapter => adapter)
-      assert_match /<br[\s]*\/>/, @premailer.to_s
-      assert_match /<br[\s]*\/>/, @premailer.to_inline_css
+      assert_match /<br[\s]*\/>/, @premailer.to_s, "Using: #{adapter}"
+      assert_match /<br[\s]*\/>/, @premailer.to_inline_css, "Using: #{adapter}"
     end
   end
 
   def test_non_self_closing_html_tags
     [:nokogiri, :nokogiri_fast, :nokogumbo].each do |adapter|
       remote_setup('html4.html', :adapter => adapter)
-      assert_match /<br>/, @premailer.to_s
-      assert_match /<br>/, @premailer.to_inline_css
+      assert_match /<br>/, @premailer.to_s, "Using: #{adapter}"
+      assert_match /<br>/, @premailer.to_inline_css, "Using: #{adapter}"
     end
   end
 
@@ -66,7 +73,7 @@ END_HTML
     [:nokogiri, :nokogiri_fast, :nokogumbo].each do |adapter|
       premailer = Premailer.new(html, :with_html_string => true, :link_query_string => qs, :adapter => adapter)
       premailer.to_inline_css
-      refute_match /testing=123/, premailer.processed_doc.search('a').first.attributes['href'].to_s
+      refute_match /testing=123/, premailer.processed_doc.search('a').first.attributes['href'].to_s, "Using: #{adapter}"
     end
   end
 
@@ -74,7 +81,7 @@ END_HTML
     [:nokogiri, :nokogiri_fast, :nokogumbo].each do |adapter|
       local_setup('ignore.html', :adapter => adapter)
 
-      assert_nil @doc.at('h1')['style']
+      assert_nil @doc.at('h1')['style'], "Using: #{adapter}"
     end
   end
 
@@ -82,7 +89,7 @@ END_HTML
     [:nokogiri, :nokogiri_fast, :nokogumbo].each do |adapter|
       local_setup('ignore.html', :adapter => adapter)
 
-      assert_nil @doc.at('body')['style']
+      assert_nil @doc.at('body')['style'], "Using: #{adapter}"
     end
   end
 
@@ -91,29 +98,29 @@ END_HTML
       local_setup('base.html', :adapter => adapter)
 
       # noimport.css (print stylesheet) sets body { background } to red
-      refute_match /red/, @doc.at('body').attributes['style'].to_s
+      refute_match /red/, @doc.at('body').attributes['style'].to_s, "Using: #{adapter}"
 
       # import.css sets .hide to { display: none }
-      assert_match /display: none/, @doc.at('#hide01').attributes['style'].to_s
+      assert_match /display: none/, @doc.at('#hide01').attributes['style'].to_s, "Using: #{adapter}"
     end
   end
 
   def test_css_to_attributes
     [:nokogiri, :nokogiri_fast, :nokogumbo].each do |adapter|
-      html = '<td style="background-color: #FFF;"></td>'
+      html = '<table><td style="background-color: #FFF;"></td></table>'
       premailer = Premailer.new(html, {:with_html_string => true, :adapter => adapter, :css_to_attributes => true})
       premailer.to_inline_css
-      assert_equal '', premailer.processed_doc.search('td').first.attributes['style'].to_s
-      assert_equal '#FFF', premailer.processed_doc.search('td').first.attributes['bgcolor'].to_s
+      assert_equal '', premailer.processed_doc.search('td').first.attributes['style'].to_s, "Using: #{adapter}"
+      assert_equal '#FFF', premailer.processed_doc.search('td').first.attributes['bgcolor'].to_s, "Using: #{adapter}"
     end
   end
 
   def test_avoid_changing_css_to_attributes
     [:nokogiri, :nokogiri_fast, :nokogumbo].each do |adapter|
-      html = '<td style="background-color: #FFF;"></td>'
+      html = '<table><td style="background-color: #FFF;"></td></table>'
       premailer = Premailer.new(html, {:with_html_string => true, :adapter => adapter, :css_to_attributes => false})
       premailer.to_inline_css
-      assert_match /background-color: #FFF/, premailer.processed_doc.at_css('td').attributes['style'].to_s
+      assert_match /background-color: #FFF/, premailer.processed_doc.at_css('td').attributes['style'].to_s, "Using: #{adapter}"
     end
   end
 
@@ -122,10 +129,10 @@ END_HTML
       remote_setup('base.html', :adapter => adapter)
 
       # noimport.css (print stylesheet) sets body { background } to red
-      refute_match /red/, @doc.at('body')['style']
+      refute_match /red/, @doc.at('body')['style'], "Using: #{adapter}"
 
       # import.css sets .hide to { display: none }
-      assert_match /display: none/, @doc.at('#hide01')['style']
+      assert_match /display: none/, @doc.at('#hide01')['style'], "Using: #{adapter}"
     end
   end
 
@@ -140,7 +147,7 @@ END_HTML
       @doc = premailer.processed_doc
 
       # import.css sets .hide to { display: none }
-      assert_match /display: none/, @doc.at('#hide01')['style']
+      assert_match /display: none/, @doc.at('#hide01')['style'], "Using: #{adapter}"
     end
   end
 
@@ -150,7 +157,7 @@ END_HTML
     assert !Premailer.local_data?( 'http://example.com/path/' )
 
     # the old way is deprecated but should still work
-    premailer = Premailer.new( StringIO.new('a') )
+    premailer = Premailer.new( StringIO.new('a'), :adapter => :nokogiri )
     silence_stderr do
       assert premailer.local_uri?( '/path/' )
     end
@@ -160,14 +167,14 @@ END_HTML
     [:nokogiri, :nokogiri_fast, :nokogumbo].each do |adapter|
       io = StringIO.new('hi mom')
       premailer = Premailer.new(io, :adapter => adapter)
-      assert_match /hi mom/, premailer.to_inline_css
+      assert_match /hi mom/, premailer.to_inline_css, "Using: #{adapter}"
     end
   end
 
   def test_initialize_can_accept_html_string
     [:nokogiri, :nokogiri_fast, :nokogumbo].each do |adapter|
       premailer = Premailer.new('<p>test</p>', :with_html_string => true, :adapter => adapter)
-      assert_match /test/, premailer.to_inline_css
+      assert_match /test/, premailer.to_inline_css, "Using: #{adapter}"
     end
   end
 
@@ -183,8 +190,8 @@ END_HTML
       pm = Premailer.new(html, :with_html_string => true, :adapter => adapter, :escape_url_attributes => false)
       pm.to_inline_css
       doc = pm.processed_doc
-      assert_equal doc.at('#google')['href'], 'http://google.com'
-      assert_equal doc.at('#noescape')['href'], '{{link_url}}'
+      assert_equal doc.at('#google')['href'], 'http://google.com', "Using: #{adapter}"
+      assert_equal doc.at('#noescape')['href'], '{{link_url}}', "Using: #{adapter}"
     end
   end
 
@@ -201,10 +208,10 @@ END_HTML
       pm = Premailer.new(html, :with_html_string => true, :remove_ids => true, :adapter => adapter)
       pm.to_inline_css
       doc = pm.processed_doc
-      assert_nil doc.at('#remove')
-      assert_nil doc.at('#keep')
+      assert_nil doc.at('#remove'), "Using: #{adapter}"
+      assert_nil doc.at('#keep'), "Using: #{adapter}"
       hashed_id = doc.at('a')['href'][1..-1]
-      refute_nil doc.at("\##{hashed_id}")
+      refute_nil doc.at("\##{hashed_id}"), "Using: #{adapter}"
     end
   end
 
@@ -220,8 +227,7 @@ END_HTML
       pm = Premailer.new(html, :with_html_string => true, :reset_contenteditable => true, :adapter => adapter)
       pm.to_inline_css
       doc = pm.processed_doc
-      assert_nil doc.at_css('#editable')['contenteditable'],
-                 "#{adapter}: contenteditable attribute not removed"
+      assert_nil doc.at_css('#editable')['contenteditable'], "Using: #{adapter}"
     end
   end
 
@@ -235,7 +241,7 @@ END_HTML
 
     [:nokogiri, :nokogiri_fast, :nokogumbo].each do |adapter|
       pm = Premailer.new(html, :with_html_string => true, :adapter => adapter)
-      assert_match /\n/, pm.to_inline_css
+      assert_match /\n/, pm.to_inline_css, "Using: #{adapter}"
     end
   end
 
@@ -259,8 +265,8 @@ END_HTML
       pm = Premailer.new(html, :with_html_string => true, :adapter => adapter)
       pm.to_inline_css
       doc = pm.processed_doc
-      assert_equal '500', doc.at('table')['width']
-      assert_equal '20', doc.at('td')['height']
+      assert_equal '500', doc.at('table')['width'], "Using: #{adapter}"
+      assert_equal '20', doc.at('td')['height'], "Using: #{adapter}"
     end
   end
 
@@ -370,7 +376,7 @@ END_HTML
     files_base = File.expand_path(File.dirname(__FILE__)) + '/files/'
     html_string = IO.read(File.join(files_base, 'html_with_uri.html'))
 
-    premailer = Premailer.new(html_string, :with_html_string => true)
+    premailer = Premailer.new(html_string, :adapter => :nokogiri, :with_html_string => true)
     premailer.to_inline_css
   end
 

@@ -12,7 +12,7 @@ script is my solution.
   - Checks links in `href`, `src` and CSS `url('')`
 * CSS properties are checked against e-mail client capabilities
   - Based on the Email Standards Project's guides
-* A plain text version is created (optional)
+* A [plain text version](https://premailer.github.io/premailer/HtmlToPlainText.html) is created (optional)
 
 ## Installation
 
@@ -80,6 +80,7 @@ Premailer looks for a few CSS attributes that make working with tables a bit eas
 | -premailer-height | Available on `table`, `tr`, `th` and `td` elements |
 | -premailer-cellpadding | Available on `table` elements |
 | -premailer-cellspacing | Available on `table` elements |
+| -premailer-align | Available on `table` elements |
 | data-premailer="ignore" | Available on `link` and `style` elements. Premailer will ignore these elements entirely. |
 
 Each of these CSS declarations will be copied to appropriate element's attribute.

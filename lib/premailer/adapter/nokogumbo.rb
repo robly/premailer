@@ -94,7 +94,7 @@ class Premailer
           el['style'] = merged.declarations_to_s
         end
 
-        doc = write_unmergable_css_rules(doc, @unmergable_rules)
+        doc = write_unmergable_css_rules(doc, @unmergable_rules) unless @options[:drop_unmergeable_css_rules]
 
         if @options[:remove_classes] or @options[:remove_comments]
           doc.traverse do |el|
@@ -226,9 +226,9 @@ class Premailer
           thing = thing.force_encoding(@options[:input_encoding]).encode!
         end
         doc = if @options[:html_fragment]
-          ::Nokogiri::HTML5(thing)
-        else
           ::Nokogiri::HTML5.fragment(thing)
+        else
+          ::Nokogiri::HTML5(thing)
         end
 
         # Fix for removing any CDATA tags from both style and script tags inserted per

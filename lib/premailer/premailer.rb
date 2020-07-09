@@ -151,14 +151,14 @@ class Premailer
   #
   # @param [Hash] options the options to handle html with.
   # @option options [Fixnum] :line_length Line length used by to_plain_text. Default is 65.
-  # @option options [Fixnum] :warn_level What level of CSS compatibility warnings to show (see {Premailer::Warnings}).
+  # @option options [Fixnum] :warn_level What level of CSS compatibility warnings to show (see {Premailer::Warnings}, default is Warnings::SAFE).
   # @option options [String] :link_query_string A string to append to every <tt>a href=""</tt> link. Do not include the initial <tt>?</tt>.
   # @option options [String] :base_url Used to calculate absolute URLs for local files.
   # @option options [Array(String)] :css Manually specify CSS stylesheets.
-  # @option options [Boolean] :css_to_attributes Copy related CSS attributes into HTML attributes (e.g. background-color to bgcolor)
+  # @option options [Boolean] :css_to_attributes Copy related CSS attributes into HTML attributes (e.g. background-color to bgcolor). Default is true.
   # @option options [Boolean] :preserve_style_attribute Preserve original style attribute
   # @option options [String] :css_string Pass CSS as a string
-  # @option options [Boolean] :rgb_to_hex_attributes Convert RBG to Hex colors, default false
+  # @option options [Boolean] :rgb_to_hex_attributes Convert RBG to Hex colors. Default is false.
   # @option options [Boolean] :remove_ids Remove ID attributes whenever possible and convert IDs used as anchors to hashed to avoid collisions in webmail programs.  Default is false.
   # @option options [Boolean] :remove_classes Remove class attributes. Default is false.
   # @option options [Boolean] :remove_comments Remove html comments. Default is false.
@@ -178,6 +178,7 @@ class Premailer
   # @option options [String] :output_encoding Output encoding option for Nokogiri adapter. Should be set to "US-ASCII" to output HTML entities instead of Unicode characters.
   # @option options [Boolean] :create_shorthands Combine several properties into a shorthand one, e.g. font: style weight size. Default is true.
   # @option options [Boolean] :html_fragment Handle HTML fragment without any HTML content wrappers. Default is false.
+  # @option options [Boolean] :drop_unmergeable_css_rules Do not include unmergeable css rules in a <tt><style><tt> tag. Default is false.  
   def initialize(html, options = {})
     @options = {:warn_level => Warnings::SAFE,
                 :line_length => 65,
@@ -209,6 +210,7 @@ class Premailer
                 :create_shorthands => true,
                 :html_fragment => false,
                 :adapter => Adapter.use,
+                :drop_unmergeable_css_rules => false
                 }.merge(options)
 
     @html_file = html
@@ -236,7 +238,7 @@ class Premailer
 
     @adapter_class = Adapter.find @options[:adapter]
 
-    self.class.send(:include, @adapter_class)
+    self.extend(@adapter_class)
 
     @doc = load_html(@html_file)
 
@@ -402,7 +404,7 @@ public
 
   # Check for an XHTML doctype
   def is_xhtml?
-    intro = @doc.to_html.strip.split("\n")[0..2].join(' ')
+    intro = @doc.to_xhtml.strip.split("\n")[0..2].join(' ')
     is_xhtml = !!(intro =~ /w3c\/\/[\s]*dtd[\s]+xhtml/i)
     $stderr.puts "Is XHTML? #{is_xhtml.inspect}\nChecked:\n#{intro}" if @options[:debug]
     is_xhtml

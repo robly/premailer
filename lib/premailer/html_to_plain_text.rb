@@ -5,6 +5,11 @@ require 'htmlentities'
 module HtmlToPlainText
 
   # Returns the text in UTF-8 format with all HTML tags removed
+  #   
+  # HTML content can be omitted from the output by surrounding it in the following comments:   
+  #
+  # <!-- start text/html -->
+  # <!-- end text/html -->
   #
   # TODO: add support for DL, OL
   def convert_to_text(html, line_length = 65, from_charset = 'UTF-8')
@@ -30,8 +35,22 @@ module HtmlToPlainText
     # <img alt=''>
     txt.gsub!(/<img.+?alt=\'([^\']*)\'[^>]*\>/i, '\1')
 
-    # links
-    txt.gsub!(/<a\s[^\n]*?href=["'](mailto:)?([^"']*)["'][^>]*>(.*?)<\/a>/im) do |s|
+    # remove script tags and content
+    txt.gsub!(/<script.*\/script>/m, '')
+
+    # links with double quotes
+    txt.gsub!(/<a\s[^\n]*?href=["'](mailto:)?([^"]*)["][^>]*>(.*?)<\/a>/im) do |s|
+      if $3.empty?
+        ''
+      elsif $3.strip.downcase == $2.strip.downcase
+        $3.strip
+      else
+        $3.strip + ' ( ' + $2.strip + ' )'
+      end
+    end
+
+    # links with single quotes
+    txt.gsub!(/<a\s[^\n]*?href=["'](mailto:)?([^']*)['][^>]*>(.*?)<\/a>/im) do |s|
       if $3.empty?
         ''
       elsif $3.strip.downcase == $2.strip.downcase
